@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>CentricIQ</title>
+<style>
+  :root{
+    --navy:#0F2A5C; --blue:#2563EB; --dblue:#1E3A8A; --ice:#EEF3FF;
+    --slate:#1F2937; --gray:#64748B; --border:#E2E8F0; --amber:#F59E0B;
+    --on-time:#16A34A; --at-risk:#D97706; --high-risk:#DC2626;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:transparent;}
+  body{
+    font-family:Inter,'Segoe UI',Roboto,Arial,sans-serif;
+    color:var(--slate);
+  }
+  .shell{
+    border:1px solid var(--border);border-radius:12px;overflow:hidden;
+    background:#FFF;
+  }
+  .hdr{
+    display:flex;align-items:center;gap:9px;padding:11px 16px;background:var(--navy);
+  }
+  .mark{
+    width:23px;height:23px;border-radius:6px;background:var(--ice);color:var(--navy);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex:none;
+  }
+  .brand{font-weight:600;font-size:14px;color:#FFFFFF;}
+  .body{padding:16px 18px;}
+  .title{font-size:15px;font-weight:600;color:var(--slate);margin-bottom:12px;}
+  .chart-wrap{margin:6px 0 4px;}
+  .bullets{margin:18px 0 4px;padding-left:18px;font-size:13px;line-height:1.7;}
+  .bullets li{margin-bottom:2px;}
+  .bullets b{color:var(--navy);}
+  .next-label{margin-top:14px;font-size:12px;color:var(--gray);margin-bottom:8px;}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;}
+  .chip{
+    font-size:12px;padding:6px 12px;border-radius:999px;background:var(--ice);color:var(--dblue);
+    border:1px solid var(--border);cursor:pointer;font-family:inherit;font-weight:500;
+    transition:background .12s ease;
+  }
+  .chip:hover{background:#E1E9FF;}
+  .chip:disabled{opacity:.6;cursor:default;}
+  .chip-arrow{color:var(--blue);}
+  .prov{
+    margin-top:15px;padding-top:11px;border-top:1px solid var(--border);
+    font-size:11px;color:var(--gray);
+  }
+  .loading{font-size:13px;color:var(--gray);padding:6px 0 2px;}
+  .empty{font-size:13px;color:var(--gray);padding:10px 0;}
+  table.dgrid{border-collapse:collapse;width:100%;font-size:12.5px;}
+  table.dgrid th{
+    text-align:left;background:var(--ice);color:var(--dblue);font-weight:600;
+    padding:8px 10px;border-bottom:1px solid var(--border);
+  }
+  table.dgrid td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--slate);}
+  .status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;}
+  .bar-row{display:flex;align-items:center;gap:8px;margin:6px 0;}
+  .bar-label{width:118px;flex:none;font-size:12px;color:var(--slate);text-align:right;padding-right:4px;}
+  .bar-track{flex:1;background:var(--border);border-radius:4px;height:16px;position:relative;overflow:hidden;}
+  .bar-fill{height:100%;border-radius:4px;}
+  .bar-val{width:52px;flex:none;font-size:12px;font-weight:600;color:var(--slate);}
+  .legend{display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap;}
+  .legend-item{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--gray);}
+  .legend-swatch{width:10px;height:10px;border-radius:2px;}
+</style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hdr">
+      <span class="mark">&#10022;</span>
+      <span class="brand">CentricIQ</span>
+    </div>
+    <div class="body" id="body">
+      <div class="loading">Waiting for a question…</div>
+    </div>
+  </div>
+
+<script type="module">
+import { App } from "https://esm.sh/@modelcontextprotocol/ext-apps@1.1.2?bundle";
+
+const bodyEl = document.getElementById("body");
+const STATUS_COLOR = { "on time": "#16A34A", "at risk": "#D97706", "high risk": "#DC2626" };
+
+const app = new App({ name: "CentricIQ View", version: "1.0.0" });
+
+// Set before connect() so the initial tool result isn't missed.
+app.ontoolresult = (result) => {
+  const data = result?.structuredContent;
+  if (!data) {
+    renderEmpty("No structured data returned.");
+    return;
+  }
+  render(data);
+};
+
+app.connect();
+
+// ---------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------
+
+function render(data) {
+  bodyEl.innerHTML = "";
+
+  const title = el("div", "title", escapeHtml(data.title || "CentricIQ Result"));
+  bodyEl.appendChild(title);
+
+  const rows = data.rows || [];
+  if (!rows.length) {
+    bodyEl.appendChild(el("div", "empty", "No rows returned for this question. Try rephrasing or broadening the time period."));
+  } else {
+    const chartWrap = document.createElement("div");
+    chartWrap.className = "chart-wrap";
+    chartWrap.appendChild(renderChart(data));
+    bodyEl.appendChild(chartWrap);
+  }
+
+  if (Array.isArray(data.bullets) && data.bullets.length) {
+    const ul = document.createElement("ul");
+    ul.className = "bullets";
+    data.bullets.slice(0, 5).forEach((b) => {
+      const li = document.createElement("li");
+      li.innerHTML = boldify(b);
+      ul.appendChild(li);
+    });
+    bodyEl.appendChild(ul);
+  }
+
+  if (Array.isArray(data.suggestions) && data.suggestions.length) {
+    bodyEl.appendChild(el("div", "next-label", "Suggested next questions"));
+    const chips = document.createElement("div");
+    chips.className = "chips";
+    data.suggestions.slice(0, 2).forEach((q) => {
+      const btn = document.createElement("button");
+      btn.className = "chip";
+      btn.innerHTML = `${escapeHtml(q)} <span class="chip-arrow">&#8599;</span>`;
+      btn.addEventListener("click", () => askFollowup(q, btn));
+      chips.appendChild(btn);
+    });
+    bodyEl.appendChild(chips);
+  }
+
+  const prov = document.createElement("div");
+  prov.className = "prov";
+  prov.textContent = `Source: ${data.domain || "CentricIQ"} · ${data.period || ""} · Updated daily`;
+  bodyEl.appendChild(prov);
+}
+
+function renderEmpty(msg) {
+  bodyEl.innerHTML = "";
+  bodyEl.appendChild(el("div", "empty", msg));
+}
+
+// Re-query the server tool with a new question (chip click), then push the
+// user's selection into the model's context so the conversation stays in sync.
+async function askFollowup(question, btnEl) {
+  const chips = bodyEl.querySelectorAll(".chip");
+  chips.forEach((c) => (c.disabled = true));
+  bodyEl.appendChild(el("div", "loading", "Loading…"));
+
+  try {
+    const result = await app.callServerTool({
+      name: "query_tool",
+      arguments: { question, user_id: "demo" },
+    });
+    if (result?.structuredContent) {
+      render(result.structuredContent);
+    }
+    await app.updateModelContext({
+      content: [{ type: "text", text: `User tapped a suggested question: "${question}"` }],
+    });
+  } catch (err) {
+    renderEmpty("Could not load that question: " + (err?.message || err));
+  }
+}
+
+// ---------------------------------------------------------------------
+// Charts (dependency-free SVG, brand palette)
+// ---------------------------------------------------------------------
+
+function renderChart(data) {
+  switch (data.chart_hint) {
+    case "line":
+      return renderLineChart(data);
+    case "bar_horizontal":
+      return renderHBarChart(data);
+    case "table":
+      return renderTable(data);
+    case "grouped_bar":
+    default:
+      return renderGroupedBarChart(data);
+  }
+}
+
+function legendFor(series) {
+  const wrap = document.createElement("div");
+  wrap.className = "legend";
+  series.forEach((s) => {
+    const item = document.createElement("div");
+    item.className = "legend-item";
+    item.innerHTML = `<span class="legend-swatch" style="background:${s.color}"></span>${escapeHtml(s.name)}`;
+    wrap.appendChild(item);
+  });
+  return wrap;
+}
+
+function renderGroupedBarChart(data) {
+  const wrap = document.createElement("div");
+  wrap.appendChild(legendFor(data.series));
+
+  const W = 640, H = 260, padL = 40, padB = 26, padT = 10, padR = 10;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const cats = data.categories;
+  const allVals = data.series.flatMap((s) => s.data);
+  const maxVal = Math.max(...allVals, 0);
+  const minVal = Math.min(...allVals, 0);
+  const range = (maxVal - minVal) || 1;
+  const zeroY = padT + plotH * (maxVal / range);
+
+  const groupW = plotW / cats.length;
+  const barGap = 6;
+  const barW = (groupW - barGap * (data.series.length + 1)) / data.series.length;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" xmlns="http://www.w3.org/2000/svg" font-family="Inter,Arial,sans-serif">`;
+  // gridlines
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (plotH / 4) * i;
+    svg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#1F2937" stroke-opacity="0.12" stroke-width="1"/>`;
+  }
+  svg += `<line x1="${padL}" y1="${zeroY.toFixed(1)}" x2="${W - padR}" y2="${zeroY.toFixed(1)}" stroke="#1F2937" stroke-opacity="0.35" stroke-width="1"/>`;
+
+  cats.forEach((cat, ci) => {
+    const groupX = padL + ci * groupW;
+    data.series.forEach((s, si) => {
+      const val = s.data[ci];
+      const barH = (Math.abs(val) / range) * plotH;
+      const x = groupX + barGap + si * (barW + barGap);
+      const y = val >= 0 ? zeroY - barH : zeroY;
+      svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(barH,1).toFixed(1)}" fill="${s.color}" rx="2"/>`;
+      const labelY = val >= 0 ? y - 4 : y + barH + 12;
+      svg += `<text x="${(x + barW / 2).toFixed(1)}" y="${labelY.toFixed(1)}" font-size="9.5" fill="#1F2937" text-anchor="middle">${val.toFixed(1)}</text>`;
+    });
+    svg += `<text x="${(groupX + groupW / 2).toFixed(1)}" y="${H - 6}" font-size="10.5" fill="#1F2937" text-anchor="middle">${escapeHtml(cat)}</text>`;
+  });
+
+  svg += `</svg>`;
+  const chartDiv = document.createElement("div");
+  chartDiv.innerHTML = svg;
+  wrap.appendChild(chartDiv);
+  return wrap;
+}
+
+function renderLineChart(data) {
+  const wrap = document.createElement("div");
+  wrap.appendChild(legendFor(data.series));
+
+  const W = 640, H = 260, padL = 36, padB = 26, padT = 12, padR = 14;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const cats = data.categories;
+  const allVals = data.series.flatMap((s) => s.data);
+  const maxVal = Math.max(...allVals);
+  const minVal = Math.min(0, Math.min(...allVals));
+  const range = (maxVal - minVal) || 1;
+
+  const xFor = (i) => padL + (i / (cats.length - 1 || 1)) * plotW;
+  const yFor = (v) => padT + plotH - ((v - minVal) / range) * plotH;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" xmlns="http://www.w3.org/2000/svg" font-family="Inter,Arial,sans-serif">`;
+  for (let i = 0; i <= 4; i++) {
+    const y = padT + (plotH / 4) * i;
+    svg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W - padR}" y2="${y.toFixed(1)}" stroke="#1F2937" stroke-opacity="0.12" stroke-width="1"/>`;
+  }
+
+  data.series.forEach((s) => {
+    const pts = s.data.map((v, i) => `${xFor(i).toFixed(1)},${yFor(v).toFixed(1)}`).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="${s.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    s.data.forEach((v, i) => {
+      svg += `<circle cx="${xFor(i).toFixed(1)}" cy="${yFor(v).toFixed(1)}" r="3" fill="${s.color}"/>`;
+    });
+  });
+
+  cats.forEach((cat, i) => {
+    svg += `<text x="${xFor(i).toFixed(1)}" y="${H - 6}" font-size="10.5" fill="#1F2937" text-anchor="middle">${escapeHtml(cat)}</text>`;
+  });
+
+  svg += `</svg>`;
+  const chartDiv = document.createElement("div");
+  chartDiv.innerHTML = svg;
+  wrap.appendChild(chartDiv);
+  return wrap;
+}
+
+function renderHBarChart(data) {
+  const wrap = document.createElement("div");
+  const series = data.series[0];
+  const maxVal = Math.max(...series.data, 1);
+
+  data.categories.forEach((cat, i) => {
+    const val = series.data[i];
+    const pct = Math.max((val / maxVal) * 100, 3);
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = `
+      <div class="bar-label">${escapeHtml(cat)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct.toFixed(1)}%;background:${series.color}"></div></div>
+      <div class="bar-val">${val.toFixed(1)}%</div>
+    `;
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function renderTable(data) {
+  const wrap = document.createElement("div");
+  const table = document.createElement("table");
+  table.className = "dgrid";
+
+  const rows = data.rows || [];
+  const keys = rows.length ? Object.keys(rows[0]) : (data.categories || []);
+
+  const thead = document.createElement("thead");
+  const trh = document.createElement("tr");
+  keys.forEach((k) => {
+    const th = document.createElement("th");
+    th.textContent = prettifyKey(k);
+    trh.appendChild(th);
+  });
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  const tbody = document.createElement("tbody");
+  rows.forEach((r) => {
+    const tr = document.createElement("tr");
+    keys.forEach((k) => {
+      const td = document.createElement("td");
+      const v = r[k];
+      if (k === "status" && STATUS_COLOR[v]) {
+        td.innerHTML = `<span class="status-dot" style="background:${STATUS_COLOR[v]}"></span>${escapeHtml(v)}`;
+      } else {
+        td.textContent = v;
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+  return wrap;
+}
+
+// ---------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------
+
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  e.className = className;
+  e.textContent = text;
+  return e;
+}
+
+function boldify(str) {
+  return escapeHtml(str).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+}
+
+function prettifyKey(k) {
+  return k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+</script>
+</body>
+</html>
