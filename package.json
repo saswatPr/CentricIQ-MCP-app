@@ -1,22 +1,14 @@
 {
-  "name": "centriciq-mcp-app",
-  "version": "1.0.0",
-  "description": "Standalone MCP Apps server for CentricIQ — returns an interactive, branded BI answer UI (chart + insights + suggested questions) from a single query_tool, backed by dummy data (no Snowflake / Cortex Analyst connection required).",
+  "name": "centriciq-mcp-app-v2",
+  "version": "2.0.0",
+  "description": "CentricIQ MCP Apps server — raw Streamable HTTP + JSON-RPC, zero dependencies. Rebuilt on a verified-working base after the @modelcontextprotocol/ext-apps SDK path failed to render in claude.ai for a custom connector.",
   "type": "module",
-  "main": "main.js",
+  "main": "server.mjs",
   "scripts": {
-    "start": "node main.js",
-    "start:stdio": "node main.js --stdio",
-    "dev": "node --watch main.js"
+    "start": "node server.mjs"
   },
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.1.2",
-    "@modelcontextprotocol/sdk": "^1.15.0",
-    "cors": "^2.8.5",
-    "express": "^4.19.2",
-    "zod": "^3.23.8"
-  }
+  "dependencies": {}
 }

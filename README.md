@@ -1,155 +1,114 @@
-# CentricIQ MCP App (standalone demo)
+# CentricIQ MCP App — v2 (raw protocol, zero dependencies)
 
-A self-contained **[MCP Apps](https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/)**
-server that showcases the CentricIQ experience — branded chart, bulleted
-insights, and tappable "suggested next questions" — rendered **inline inside
-the chat**, not as a Claude Artifact.
+This is a rebuild of the CentricIQ MCP Apps demo on a **verified-working base**
+(github.com/saswatPr/MCP-app-demo), after the original `@modelcontextprotocol/ext-apps`
+SDK version failed to render in claude.ai for a custom connector — the tool
+call succeeded and returned correct data, but claude.ai never called
+`resources/read` to fetch the widget, despite correct capability negotiation.
 
-This is a **standalone demo**: `query_tool` returns hand-authored dummy data
-instead of calling Snowflake's `routing_tool` / Cortex Analyst. Swap the body
-of `routeQuestion()` in `data/dummy-data.js` for a real call when you're ready
-to go from demo → production — the tool contract and the View don't change.
+## What's different from v1
 
-## How it maps to the real CentricIQ project
+- **No npm dependencies at all.** Raw `node:http`, no Express, no MCP SDK, no
+  `@modelcontextprotocol/ext-apps`. Two files: `server.mjs` and `widget.html`.
+- **No `esm.sh` import in the widget.** v1's View imported the ext-apps SDK
+  from a CDN at runtime — a plausible extra point of failure inside a
+  sandboxed iframe with no declared `resourceDomains`. v2's widget is fully
+  self-contained.
+- **Every claude.ai-specific quirk implemented explicitly**, based on a
+  working reference implementation and confirmed against the official spec
+  docs where possible:
 
-| Real CentricIQ | This demo |
-|---|---|
-| `Snowflake:routing_tool` → Cortex Analyst → domain agent | `routeQuestion()` — keyword match over 3 canned subject areas + a generic fallback |
-| `query_tool(question, domain_hint?, user_id)` | Same signature, same contract |
-| Claude renders the branded `<answer_shell>` HTML as an **artifact** | An MCP host renders the CentricIQ View as an **MCP App**, inside a sandboxed iframe, driven live by tool results |
-| Suggested-question chips call `sendPrompt(...)` to re-prompt Claude | Chips call `app.callServerTool()` to re-query directly, then `app.updateModelContext()` to keep the model in sync |
+  1. **Echo the client's `protocolVersion`** in the `initialize` response —
+     claude.ai speaks `2025-11-25`; hardcoding a different value fails the
+     connection outright.
+  2. **`_meta.ui.domain`** on the `resources/read` response:
+     `sha256("<endpoint URL incl. /mcp>")[:32] + ".claudemcpcontent.com"`,
+     computed dynamically from the request's `Host` header. Spec-optional,
+     but claude.ai silently withholds the iframe without it.
+  3. **Declare the tool's resource link twice** — both the spec-correct
+     `_meta.ui.resourceUri` and a flat `"ui/resourceUri"` key, since
+     claude.ai's current client reads the flat one.
+  4. **`mimeType: "text/html;profile=mcp-app"`** exactly, on both
+     `resources/list` and `resources/read`.
+  5. **Send `ui/notifications/initialized` unconditionally** from the widget
+     — on any result-bearing reply to `ui/initialize`, plus a timeout
+     fallback — since claude.ai keeps the iframe reserved-but-hidden until
+     it receives this notification.
+  6. **`ui/notifications/size-changed` params are always numbers**, never
+     `null`/missing.
+  7. **A dedicated `/healthz` endpoint** that returns and closes immediately
+     — don't point a hosting platform's health check at a streaming/SSE path,
+     it'll hang forever waiting for a response that never completes.
 
-## What's an MCP App?
-
-MCP Apps is the first official MCP extension: a tool declares
-`_meta.ui.resourceUri` pointing at a `ui://` resource containing bundled
-HTML/JS. A compatible host (Claude, ChatGPT, VS Code, Goose, ...) fetches that
-resource, renders it in a sandboxed iframe, and wires up bidirectional
-JSON-RPC over `postMessage` — the tool result streams straight into the UI,
-and the UI can call more tools or nudge the conversation forward.
-
-## Project layout
+## Files
 
 ```
-centriciq-mcp-app/
-├── main.js                    # entry point (Streamable HTTP + stdio transports)
-├── server.js                  # registers query_tool + its ui:// resource (2-part registration)
-├── data/
-│   └── dummy-data.js          # dummy dataset + keyword router (stand-in for routing_tool)
-├── views/
-│   └── centriciq-view.html    # the View: branded shell, dependency-free SVG charts, chips
-├── package.json
+centriciq-mcp-app-v2/
+├── server.mjs      # the whole server: routing, dummy data, MCP protocol handling
+├── widget.html     # the whole widget: handshake, branded chart/insights UI
+├── package.json    # zero dependencies
 └── README.md
 ```
 
-No build step is required — the View imports the `@modelcontextprotocol/ext-apps`
-browser SDK straight from `esm.sh` inside a `<script type="module">` tag, so
-`views/centriciq-view.html` is already the "bundled" artifact the resource serves.
-
-## 1. Run it locally
+## Run it locally
 
 ```bash
-npm install
-npm start
+npm start                          # http://localhost:8787/mcp
+# optional bearer auth:
+AUTH_TOKEN=secret npm start
 ```
 
-You should see:
-
-```
-CentricIQ MCP App listening on http://localhost:3001/mcp
-```
-
-Quick sanity check:
-
+Quick check:
 ```bash
-curl -s http://localhost:3001/                       # health check
-curl -s -X POST http://localhost:3001/mcp \
-  -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
-       "params":{"name":"query_tool",
-                 "arguments":{"question":"Top accounts by rebate leakage %"}}}'
+curl http://localhost:8787/healthz          # -> ok
+curl -X POST http://localhost:8787/mcp -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"query_tool","arguments":{"question":"brand growth"}}}'
 ```
 
-### Try the View in the reference test host
+## Deploy on Render (free tier)
 
-The MCP Apps team ships a minimal browser-based host for exactly this:
+| Field | Value |
+|---|---|
+| Language | `Node` |
+| Build Command | `npm install` |
+| Start Command | `npm start` |
+| Instance Type | `Free` |
+| **Health Check Path** | **`/healthz`** — do not leave this as `/` or `/mcp` |
 
-```bash
-git clone https://github.com/modelcontextprotocol/ext-apps.git
-cd ext-apps && npm install
-cd examples/basic-host && npm start
+No env vars required. `AUTH_TOKEN` is optional — leave unset for an open demo
+(claude.ai's "URL only" custom connector flow has no field for a bearer token
+anyway, so setting one would break real tool calls even if the health check
+passes).
+
+## Connect it in claude.ai
+
+Settings → Connectors → Add custom connector → paste your deployed URL with
+the `/mcp` path, e.g.:
 ```
-
-Open `http://localhost:8080`, point it at `http://localhost:3001/mcp`, pick
-`query_tool` from the dropdown, fill in a `question`, and **Call Tool** — the
-CentricIQ chart + insights + chips render in the sandboxed panel below.
-
-### Try it over stdio (Claude Desktop, VS Code, etc.)
-
-```json
-{
-  "mcpServers": {
-    "centriciq": {
-      "command": "node",
-      "args": ["/absolute/path/to/centriciq-mcp-app/main.js", "--stdio"]
-    }
-  }
-}
+https://your-app.onrender.com/mcp
 ```
+On Enterprise, an Owner must add it first via Organization Settings →
+Connectors → Add → Custom → Web; members then connect individually.
 
-## 2. Deploy it publicly
+Ask something like *"Which brands grew the most YoY and what's their margin %?"*
+— the CentricIQ chart + insights widget should render inline.
 
-Any host that runs a long-lived Node process works. Two easy options:
+## Known limitation: suggestion chips
 
-**Render / Railway / Fly.io (Node web service)**
-1. Push this folder to a Git repo.
-2. Create a new Web Service pointing at that repo.
-3. Build command: `npm install` · Start command: `npm start`.
-4. Set the `PORT` env var if your platform requires it (most inject it automatically —
-   `main.js` already reads `process.env.PORT`).
-5. Your public MCP endpoint is `https://<your-app>.onrender.com/mcp` (or the
-   equivalent for your platform).
+The chart, bullets, provenance line, and initial render are all built on the
+same handshake pattern proven to work end-to-end. The **suggestion chips**
+(tapping one to re-query) additionally send a `tools/call` request *from the
+widget back through the host*, via `callServerTool`-equivalent raw
+`postMessage` — this specific path is less battle-tested than the base
+handshake, since the verified reference implementation this project is built
+on didn't include interactive re-querying. If a chip click doesn't visibly
+refresh the chart, that's the first place to look; it does not affect the
+initial chart rendering on the first question.
 
-**Plain VM / container**
-```bash
-npm install --omit=dev
-PORT=3001 node main.js
-```
-Put it behind your usual reverse proxy / TLS termination (nginx, Caddy, the
-platform's load balancer, etc). CORS is already open (`app.use(cors())`) so
-browser-based hosts can reach it directly.
+## Extending beyond dummy data
 
-There's nothing to configure for Snowflake/Cortex in this build — it's fully
-standalone, read-only, and has no external data dependency.
-
-## 3. Connect it to a host
-
-**Claude.ai / Claude Desktop** — add a custom connector pointing at your public
-`/mcp` URL (Settings → Connectors → Add custom connector). Once connected, ask
-something like *"Which brands grew the most YoY and what's their margin %?"*
-and CentricIQ calls `query_tool` and renders the View inline.
-
-**ChatGPT / VS Code / Goose** — any MCP Apps-compatible host: add the same
-`/mcp` URL as an MCP server and call `query_tool` the same way.
-
-## 4. Extending beyond dummy data
-
-To go from demo to production:
-
-1. Replace `routeQuestion()` in `data/dummy-data.js` with a real call — e.g. an
-   MCP client call into your `Snowflake:*_agent` tools, or a direct Cortex
-   Analyst request.
-2. Keep the returned shape the same:
-   `{ domain, period, chart_hint, title, categories, series, rows, bullets, suggestions }`
-   so the View doesn't need to change.
-3. If you want the routing itself to be smarter than keyword matching, that's
-   exactly what `domain_hint` is for — pass it through untouched from the
-   caller, as this demo already does.
-
-## Brand reference (used verbatim in the View)
-
-- Navy `#0F2A5C` (header/identity) · Primary Blue `#2563EB` (CTA/accents)
-- Dark Blue `#1E3A8A` · Ice Blue `#EEF3FF` (badges/chips) · Slate `#1F2937` (body text)
-- Gray `#64748B` (secondary text) · Border Gray `#E2E8F0`
-- Status colors (never brand-recolored): on time `#16A34A` · at risk `#D97706` · high risk `#DC2626`
+Replace `routeQuestion()` in `server.mjs` with a real call (e.g. into your
+`Snowflake:*_agent` tools via an MCP client, or directly to Cortex Analyst).
+Keep the returned shape the same — `{ domain, period, chart_hint, title,
+categories, series, rows, bullets, suggestions }` — so `widget.html` doesn't
+need to change.
