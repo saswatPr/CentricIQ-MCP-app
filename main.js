@@ -27,6 +27,23 @@ async function startHttpServer() {
   });
 
   app.all("/mcp", async (req, res) => {
+    // --- DIAGNOSTIC LOGGING -------------------------------------------
+    // Logs every JSON-RPC method claude.ai sends, plus the client's
+    // declared capabilities on initialize (look for "ui" in there).
+    // Remove once you've confirmed rendering works, or gate behind
+    // process.env.DEBUG_MCP if you want to leave it in permanently.
+    const method = req.body?.method;
+    if (method) {
+      console.log(`[MCP] <- ${method}`, JSON.stringify(req.body?.params ?? {}));
+      if (method === "initialize") {
+        console.log(
+          "[MCP] client capabilities:",
+          JSON.stringify(req.body?.params?.capabilities ?? {}),
+        );
+      }
+    }
+    // -------------------------------------------------------------------
+
     // Stateless mode: a new server + transport per request avoids shared
     // session state between callers, which is what you want for a public demo.
     const server = createServer();

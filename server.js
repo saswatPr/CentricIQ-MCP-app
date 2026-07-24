@@ -35,6 +35,10 @@ export function createServer() {
     CENTRICIQ_RESOURCE_URI,
     { mimeType: RESOURCE_MIME_TYPE },
     async () => {
+      // DIAGNOSTIC: if this line never appears in your logs after a tool
+      // call, the host never asked for the View — the gap is entirely on
+      // the host's decision to render, not your server.
+      console.log(`[MCP] resources/read -> ${CENTRICIQ_RESOURCE_URI}`);
       const html = await fs.readFile(
         path.join(VIEWS_DIR, "centriciq-view.html"),
         "utf-8",
