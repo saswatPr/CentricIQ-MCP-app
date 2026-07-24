@@ -98,25 +98,36 @@
   }
 
   // ---------------------------------------------------------------------
-  // Calling the server tool again from inside the widget (suggestion
-  // chips). The host proxies this as a regular tools/call to the server.
-  // NOTE: this path is less battle-tested than the base handshake above —
-  // if a chip click doesn't visibly refresh the chart, that's the first
-  // place to look; the initial render (tool-result on load) does not
-  // depend on this working.
+  // Generic request/response helper, matching the spec's own reference
+  // transport snippet (apps.mdx "Transport Layer" section).
   // ---------------------------------------------------------------------
   let nextId = 100;
   const pending = new Map();
-  function callServerTool(name, args, timeoutMs = 8000) {
+  function request(method, params, timeoutMs = 8000) {
     const id = nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(new Error("timed out waiting for tool result"));
+        reject(new Error("timed out waiting for " + method + " response"));
       }, timeoutMs);
       pending.set(id, { resolve, reject, timer });
-      post({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+      post({ jsonrpc: "2.0", id, method, params });
     });
+  }
+
+  // Left chip: refresh this widget's own content in place, via a proxied
+  // tools/call (spec: "Interactive Updates" — Views can call tools to
+  // request fresh data; result returned via standard tools/call response).
+  function callServerTool(name, args) {
+    return request("tools/call", { name, arguments: args });
+  }
+
+  // Right chip: post the question as a NEW turn in the conversation (spec:
+  // `ui/message` — "Send message content to the host's chat interface").
+  // The agent responds normally, rendering a fresh widget in a new message,
+  // rather than updating this same iframe.
+  function sendChatMessage(text) {
+    return request("ui/message", { role: "user", content: { type: "text", text } });
   }
 
   window.addEventListener("message", (ev) => {
@@ -124,21 +135,22 @@
     if (d == null) return;
     if (typeof d === "string") { try { d = JSON.parse(d); } catch (e) { return; } }
 
-    // A response (has `result`, no `method`)
-    if (d.result !== undefined && d.method === undefined) {
+    // A response (has `result` or `error`, no `method`)
+    if (d.method === undefined && (d.result !== undefined || d.error !== undefined)) {
       if (d.id === 1) {
         // ui/initialize response
-        sendInitialized(d.result.hostInfo && d.result.hostInfo.name);
-        if (d.result.hostContext && d.result.hostContext.theme === "dark") {
+        sendInitialized(d.result && d.result.hostInfo && d.result.hostInfo.name);
+        if (d.result && d.result.hostContext && d.result.hostContext.theme === "dark") {
           document.documentElement.style.colorScheme = "dark";
         }
         return;
       }
       if (pending.has(d.id)) {
-        const { resolve, timer } = pending.get(d.id);
+        const { resolve, reject, timer } = pending.get(d.id);
         clearTimeout(timer);
         pending.delete(d.id);
-        resolve(d.result);
+        if (d.error) reject(new Error(d.error.message || "request failed"));
+        else resolve(d.result);
         return;
       }
       return;
@@ -201,11 +213,13 @@
       bodyEl.appendChild(el("div", "next-label", "Suggested next questions"));
       const chips = document.createElement("div");
       chips.className = "chips";
-      data.suggestions.slice(0, 2).forEach((q) => {
+      data.suggestions.slice(0, 2).forEach((q, i) => {
         const btn = document.createElement("button");
         btn.className = "chip";
-        btn.innerHTML = `${escapeHtml(q)} <span class="chip-arrow">&#8599;</span>`;
-        btn.addEventListener("click", () => askFollowup(q));
+        // Left chip (i === 0): refresh in place. Right chip (i === 1): new message.
+        const arrow = i === 0 ? "&#8635;" : "&#8599;"; // ↻ refresh vs ↗ new message
+        btn.innerHTML = `${escapeHtml(q)} <span class="chip-arrow">${arrow}</span>`;
+        btn.addEventListener("click", () => (i === 0 ? refreshInPlace(q) : askFollowup(q)));
         chips.appendChild(btn);
       });
       bodyEl.appendChild(chips);
@@ -219,7 +233,8 @@
     sizeToContent();
   }
 
-  async function askFollowup(question) {
+  // Left chip: silently refresh this same widget's content.
+  async function refreshInPlace(question) {
     const chips = bodyEl.querySelectorAll(".chip");
     chips.forEach((c) => (c.disabled = true));
     crumb("loading “" + question + "”…");
@@ -228,6 +243,20 @@
       if (result && result.structuredContent) render(result.structuredContent);
     } catch (err) {
       crumb("couldn't load that question: " + (err && err.message ? err.message : err));
+      chips.forEach((c) => (c.disabled = false));
+    }
+  }
+
+  // Right chip: post the question as a new turn in the conversation.
+  async function askFollowup(question) {
+    const chips = bodyEl.querySelectorAll(".chip");
+    chips.forEach((c) => (c.disabled = true));
+    crumb("sending to chat…");
+    try {
+      await sendChatMessage(question);
+      crumb("sent — see the new message below");
+    } catch (err) {
+      crumb("couldn't send: " + (err && err.message ? err.message : err));
       chips.forEach((c) => (c.disabled = false));
     }
   }

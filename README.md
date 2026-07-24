@@ -93,17 +93,24 @@ Connectors → Add → Custom → Web; members then connect individually.
 Ask something like *"Which brands grew the most YoY and what's their margin %?"*
 — the CentricIQ chart + insights widget should render inline.
 
-## Known limitation: suggestion chips
+## Suggestion chips
 
-The chart, bullets, provenance line, and initial render are all built on the
-same handshake pattern proven to work end-to-end. The **suggestion chips**
-(tapping one to re-query) additionally send a `tools/call` request *from the
-widget back through the host*, via `callServerTool`-equivalent raw
-`postMessage` — this specific path is less battle-tested than the base
-handshake, since the verified reference implementation this project is built
-on didn't include interactive re-querying. If a chip click doesn't visibly
-refresh the chart, that's the first place to look; it does not affect the
-initial chart rendering on the first question.
+The two chips now behave differently, on purpose:
+
+- **Left chip (↻ refresh icon):** calls `tools/call` from the widget back
+  through the host (spec: "Interactive Updates" — Views can call tools to
+  request fresh data) and re-renders the **same** widget in place with the
+  new result. Nothing new appears in the chat.
+- **Right chip (↗ arrow icon):** sends `ui/message` (spec: "Send message
+  content to the host's chat interface") with `role: "user"`, posting the
+  question as a **new turn in the conversation** — the same as if you'd
+  typed it. The agent responds normally, rendering a **new** CentricIQ
+  widget in a new chat message.
+
+Both are official spec messages (`specification/2026-01-26/apps.mdx`), so
+both carry reasonable confidence — but they're still the only interactive
+paths this project exercises beyond the base render-on-load handshake, so
+worth testing both explicitly after any change.
 
 ## Extending beyond dummy data
 
