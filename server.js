@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +16,30 @@ const VIEWS_DIR = path.join(__dirname, "views");
 
 // The ui:// URI is the link between the tool and its View (2-part registration).
 const CENTRICIQ_RESOURCE_URI = "ui://centriciq/answer-shell.html";
+
+/**
+ * Claude requires (in practice, beyond what the spec marks optional) a
+ * stable per-app origin derived from your MCP server's own public URL —
+ * see https://apps.extensions.modelcontextprotocol.io/api/documents/csp-and-cors.html
+ *
+ * Set PUBLIC_MCP_URL in your Render environment to your deployed endpoint,
+ * e.g. https://centriciq-mcp-app.onrender.com/mcp — must match EXACTLY
+ * (protocol, host, path) or the hash — and therefore the domain Claude
+ * expects — won't match.
+ */
+function computeAppDomainForClaude(mcpServerUrl) {
+  const hash = crypto
+    .createHash("sha256")
+    .update(mcpServerUrl)
+    .digest("hex")
+    .slice(0, 32);
+  return `${hash}.claudemcpcontent.com`;
+}
+
+const PUBLIC_MCP_URL =
+  process.env.PUBLIC_MCP_URL || "https://centriciq-mcp-app.onrender.com/mcp";
+const APP_DOMAIN = computeAppDomainForClaude(PUBLIC_MCP_URL);
+console.log(`[MCP] computed Claude app domain: ${APP_DOMAIN} (from ${PUBLIC_MCP_URL})`);
 
 /**
  * Creates a fresh MCP server instance (stateless per-request, per the
@@ -45,7 +70,25 @@ export function createServer() {
       );
       return {
         contents: [
-          { uri: CENTRICIQ_RESOURCE_URI, mimeType: RESOURCE_MIME_TYPE, text: html },
+          {
+            uri: CENTRICIQ_RESOURCE_URI,
+            mimeType: RESOURCE_MIME_TYPE,
+            text: html,
+            _meta: {
+              ui: {
+                // CSP: the View's <script type="module"> imports the
+                // ext-apps SDK from esm.sh — sandboxed iframes block all
+                // external resource loads by default, so this must be
+                // declared explicitly or the import silently fails.
+                csp: {
+                  resourceDomains: ["https://esm.sh"],
+                },
+                // CORS/stable-origin: Claude-specific requirement, see
+                // note above computeAppDomainForClaude().
+                domain: APP_DOMAIN,
+              },
+            },
+          },
         ],
       };
     },
